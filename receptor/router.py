@@ -2,11 +2,10 @@ import datetime
 import heapq
 import logging
 import random
-import uuid
 from collections import defaultdict
 
 from .exceptions import ReceptorBufferError, UnrouteableError
-from .messages.framed import CommandMessage
+from .messages.framed import FramedMessage
 from .stats import route_counter, route_info
 
 logger = logging.getLogger(__name__)
@@ -76,7 +75,7 @@ class MeshRouter:
     async def ping_node(self, node_id, expected_response=True):
         logger.info(f'Sending ping to node {node_id}')
         now = datetime.datetime.utcnow().isoformat()
-        message = CommandMessage(header=dict(
+        message = FramedMessage(header=dict(
             sender=self.node_id,
             recipient=node_id,
             message_type='directive',
