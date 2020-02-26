@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import shutil
 import sys
 import time
@@ -8,7 +7,6 @@ import time
 from prometheus_client import start_http_server
 
 from .controller import Controller
-from .messages import Message
 
 logger = logging.getLogger(__name__)
 
@@ -128,18 +126,15 @@ def run_as_send(config):
         return await run_oneshot_command(controller, config.send_peer, config.send_recipient, send_message, read_responses)
 
     async def send_message():
-        msg = Message(config.send_recipient, config.send_directive)
         if config.send_payload == "-":
-            msg.data(sys.stdin.buffer.read())
-        elif os.path.exists(config.send_payload):
-            msg.file(config.send_payload)
+            data = sys.stdin.buffer.read()
         else:
-            if isinstance(config.send_payload, str):
-                send_payload = config.send_payload.encode()
-            else:
-                send_payload = config.send_payload
-            msg.data(send_payload)
-        await controller.send(msg)
+            data = config.send_payload
+        await controller.send(
+            payload=data,
+            recipient=config.send_recipient,
+            directive=config.send_directive
+        )
 
     async def read_responses():
         while True:
