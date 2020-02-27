@@ -9,6 +9,7 @@ import pkg_resources
 
 from . import exceptions
 from .messages import directive, framed
+from .exceptions import ReceptorMessageError
 from .router import MeshRouter
 from .stats import messages_received_counter, receptor_info
 from .work import WorkManager
@@ -109,10 +110,10 @@ class Receptor:
                 logger.exception("message_handler")
                 break
             else:
-                logger.debug("message_handler: %s", data)
                 if "cmd" in data.header and data.header["cmd"] == "ROUTE":
                     await self.handle_route_advertisement(data.header)
                 else:
+                    logger.debug(f"Handle Message {data}")
                     await self.handle_message(data)
 
     def update_connections(self, protocol_obj, id_=None):
@@ -212,6 +213,8 @@ class Receptor:
             else:
                 # TODO: other namespace/work directives
                 await self.work_manager.handle(msg)
+        except ReceptorMessageError as e:
+            logger.error(f"Receptor Message Error '{e}''")
         except ValueError:
             logger.error(f"error in handle_message: Invalid directive -> '{msg}'. Sending failure response back.")
             err_resp = framed.FramedMessage(header=dict(
@@ -246,23 +249,15 @@ class Receptor:
             logger.warning(f'Received response to {in_response_to} but no record of sent message.')
 
     async def handle_message(self, msg):
-        handlers = dict(
-            directive=self.handle_directive,
-            response=self.handle_response,
-            eof=self.handle_response,
-        )
         messages_received_counter.inc()
         next_hop = self.router.next_hop(msg.header["recipient"])
         if next_hop:
             return await self.router.forward(msg, next_hop)
 
-        # inner = await envelope.Inner.deserialize(self, msg.payload.read())
-
-        message_type = msg.header["message_type"]
-        logger.debug(f"message type is {message_type}")
-
-        if message_type not in handlers:
+        if "in_response_to" in msg.header:
+            await self.handle_response(msg)
+        elif "directive" in msg.header:
+            await self.handle_directive(msg)
+        else:
             raise exceptions.UnknownMessageType(
-                f'Unknown message type: {message_type}')
-
-        await handlers[message_type](msg)
+                f'Failed to determine message type for data: {msg}')

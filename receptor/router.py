@@ -78,7 +78,6 @@ class MeshRouter:
         message = FramedMessage(header=dict(
             sender=self.node_id,
             recipient=node_id,
-            message_type='directive',
             timestamp=now,
             directive='receptor:ping',
             ttl=15
@@ -159,6 +158,6 @@ class MeshRouter:
             "route_list": [self.node_id]
         })
         logger.debug(f'Sending {message.msg_id} to {recipient} via {next_node_id}')
-        if expected_response and message.header["message_type"] == 'directive':
+        if expected_response and "directive" in message.header:
             self.response_registry[message.msg_id] = dict(message_sent_time=message.header["timestamp"])
         await self.forward(message, next_node_id)
