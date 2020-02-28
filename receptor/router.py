@@ -115,7 +115,7 @@ class MeshRouter:
         """
         Forward a message on to the next hop closer to its destination
         """
-        buffer_obj = self.receptor.buffer_mgr.get(next_hop)
+        buffer_obj = self.receptor.buffer_mgr[next_hop]
         msg.header["route_list"].append(self.node_id)
         logger.debug(f'Forwarding frame {msg.msg_id} to {next_hop}')
         try:
