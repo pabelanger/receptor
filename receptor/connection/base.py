@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from abc import abstractmethod, abstractproperty
 from collections.abc import AsyncIterator
 
@@ -28,17 +29,46 @@ class Transport(AsyncIterator):
         pass
 
     @abstractmethod
-    async def send(self, bytes_):
+    def send(self, q):
         pass
 
 
-async def watch_queue(conn, buf):
+class Chunked(asyncio.Queue):
+
+    sentinel = object()
+
+    async def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        item = await self.get()
+        if item is self.sentinel:
+            raise StopAsyncIteration
+        return item
+
+    @classmethod
+    def one(cls, item):
+        q = cls()
+        q.put_nowait(item)
+        q.put_nowait(q.sentinel)
+        return q
+
+
+def chunker(fp, q, chunk_size=2 ** 12):
+    chunk = fp.read(chunk_size)
+    while chunk:
+        q.put_nowait(chunk)
+        chunk = fp.read(chunk_size)
+    q.put_nowait(q.sentinel)
+
+
+async def watch_queue(loop, conn, buf):
     try:
         logger.debug(f'Watching queue {str(conn)}')
         while not conn.closed:
             try:
-                msg = await asyncio.wait_for(buf.get(), 5.0)
-                if not msg:
+                ident, fp = await asyncio.wait_for(buf.get(handle_only=True), 5.0)
+                if not fp:
                     if conn is not None and not conn.closed:
                         await conn.close()
             except asyncio.TimeoutError:
@@ -51,14 +81,21 @@ async def watch_queue(conn, buf):
                 if conn.closed:
                     logger.debug('Message not sent: connection already closed')
                 else:
-                    await conn.send(msg)
+                    q = Chunked()
+                    await asyncio.gather(loop.run_in_executor(None, chunker, fp, q), conn.send(q))
             except Exception:
                 logger.exception("watch_queue: error received trying to write")
-                await buf.put(msg)
+                await buf.put_ident(ident)
                 if conn is not None and not conn.closed:
                     return await conn.close()
                 else:
                     return
+            else:
+                fp.close()
+                try:
+                    await loop.run_in_executor(None, os.remove, fp)
+                except TypeError:
+                    pass  # some messages aren't actually files
     except asyncio.CancelledError:
         logger.debug("watch_queue: cancel request received")
         if conn is not None and not conn.closed:
@@ -105,7 +142,7 @@ class Worker:
 
     async def hello(self):
         msg = self.receptor._say_hi().serialize()
-        await self.conn.send(msg)
+        await self.conn.send(Chunked.one(msg))
 
     async def start_processing(self):
         await self.receptor.send_route_advertisement()
@@ -114,7 +151,7 @@ class Worker:
             self.receptor.message_handler(self.buf)
         )
         out = self.receptor.buffer_mgr[self.remote_id]
-        self.write_task = self.loop.create_task(watch_queue(self.conn, out))
+        self.write_task = self.loop.create_task(watch_queue(self.loop, self.conn, out))
         return await self.write_task
 
     async def _wait_handshake(self):

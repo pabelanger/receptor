@@ -56,12 +56,17 @@ class DurableBuffer:
         await self.q.put(item)
         self._manifest_dirty = True
 
+    async def put_ident(self, ident):
+        await self.q.put(ident)
+        self._manifest_dirty = True
+
     async def get(self, handle_only=False, delete=True):
         while True:
-            msg = await self.q.get()
+            ident = await self.q.get()
             self._manifest_dirty = True
             try:
-                return await self._get_file(msg["ident"], handle_only=handle_only, delete=delete)
+                f = await self._get_file(ident["ident"], handle_only=handle_only, delete=delete)
+                return (ident, f)
             except (FileNotFoundError, TypeError):
                 pass
 
