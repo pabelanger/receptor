@@ -137,7 +137,11 @@ class DurableBuffer:
 class FileBufferManager:
 
     def __init__(self, path, loop=asyncio.get_event_loop()):
-        self._buffers = defaultdict(lambda node_id: DurableBuffer(path, node_id, loop))
+        self.path = path
+        self.loop = loop
+        self._buffers = dict()
 
     def get(self, node_id):
+        if node_id not in self._buffers:
+            self._buffers[node_id] = DurableBuffer(self.path, node_id, self.loop)
         return self._buffers[node_id]
