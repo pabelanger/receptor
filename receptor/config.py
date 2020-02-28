@@ -5,8 +5,9 @@ import logging
 import os
 import ssl
 
-from .entrypoints import run_as_node, run_as_ping, run_as_send, run_as_controller, run_as_status
-from .exceptions import ReceptorRuntimeError, ReceptorConfigError
+from .entrypoints import (run_as_controller, run_as_node, run_as_ping,
+                          run_as_send, run_as_status)
+from .exceptions import ReceptorConfigError, ReceptorRuntimeError
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ SUBCOMMAND_EXTRAS = {
     },
     'controller': {
         'hint': 'Run a Receptor controller',
-        'entrypoint': run_as_controller,  # TODO: New entrypoint
+        'entrypoint': run_as_controller,
         'is_ephemeral': False,
     },
     'ping': {
@@ -38,15 +39,6 @@ SUBCOMMAND_EXTRAS = {
         'is_ephemeral': True,
     },
 }
-
-
-def py_class(class_spec):
-    if class_spec not in SINGLETONS:
-        module_name, class_name = class_spec.rsplit('.', 1)
-        module_obj = importlib.import_module(module_name)
-        class_obj = getattr(module_obj, class_name)
-        SINGLETONS[class_spec] = class_obj()
-    return SINGLETONS[class_spec]
 
 
 class ConfigOption:
@@ -337,25 +329,6 @@ class ReceptorConfig:
             value_type='str',
             hint='Payload of the directive to send. Use - for stdin or give the path to a file to transmit the file contents.',
         )
-        # Component options. These are also only used in a config section
-        # like auth, so they also set `subparse=False`.
-        self.add_config_option(
-            'components',
-            'security_manager',
-            default_value='receptor.security.MallCop',
-            value_type=py_class,
-            subparse=False,
-            hint='',
-        )
-        self.add_config_option(
-            'components',
-            'buffer_manager',
-            default_value='receptor.buffers.file.FileBufferManager',
-            value_type=py_class,
-            subparse=False,
-            hint='',
-        )
-
         self.parse_options(args)
 
     def add_config_option(self, section, key, cli=True, short_option='', long_option='',

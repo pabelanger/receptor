@@ -8,8 +8,9 @@ import uuid
 import pkg_resources
 
 from . import exceptions
-from .messages import directive, framed
+from .buffers.file import FileBufferManager
 from .exceptions import ReceptorMessageError
+from .messages import directive, framed
 from .router import MeshRouter
 from .stats import messages_received_counter, receptor_info
 from .work import WorkManager
@@ -31,7 +32,8 @@ class Receptor:
         if not os.path.exists(self.base_path):
             os.makedirs(os.path.join(self.config.default_data_dir, self.node_id))
         self.connection_manifest_path = os.path.join(self.base_path, "connection_manifest")
-        self.buffer_mgr = self.config.components_buffer_manager
+        path = os.path.join(os.path.expanduser(self.base_path))
+        self.buffer_mgr = FileBufferManager(path)
         self.stop = False
         self.node_capabilities = {
                 self.node_id: self.work_manager.get_capabilities()
@@ -57,7 +59,7 @@ class Receptor:
         while True:
             current_manifest = self.get_connection_manifest()
             for connection in current_manifest:
-                buffer = self.buffer_mgr.get_buffer_for_node(connection["id"], self)
+                buffer = self.buffer_mgr.get(connection["id"])
                 await buffer.expire()
                 if connection["last"] + 86400 < time.time():
                     self.remove_connection_manifest(connection["id"])
@@ -189,8 +191,8 @@ class Receptor:
         seens = list(seen | destinations | {self.node_id})
 
         # TODO: This should be a broadcast call to the connection manager
-        for target in destinations:
-            buf = self.buffer_mgr.get_buffer_for_node(target, self)
+        for node_id in destinations:
+            buf = self.buffer_mgr.get(node_id)
             try:
                 msg = framed.FramedMessage(header={
                     "cmd": "ROUTE",
@@ -219,7 +221,7 @@ class Receptor:
             logger.error(f"error in handle_message: Invalid directive -> '{msg}'. Sending failure response back.")
             err_resp = framed.FramedMessage(header=dict(
                 recipient=msg.header['sender'],
-                in_response_to=msg.header['message_id'],
+                in_response_to=msg.msg_ig,
                 serial=msg.header['serial'] + 1,
                 ttl=15,
                 code=1,
@@ -231,7 +233,7 @@ class Receptor:
             logger.error("error in handle_message: '%s'. Sending failure response back.", str(e))
             err_resp = framed.FramedMessage(header=dict(
                 recipient=msg.header['sender'],
-                in_response_to=msg.header['message_id'],
+                in_response_to=msg.msg_id,
                 serial=msg.header['serial'] + 1,
                 ttl=15,
                 code=1,
