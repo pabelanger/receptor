@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import queue
 from abc import abstractmethod, abstractproperty
 from collections.abc import AsyncIterator
 
@@ -33,7 +34,18 @@ class Transport(AsyncIterator):
         pass
 
 
-class Chunked(asyncio.Queue):
+class BridgeQueue(queue.Queue):
+    """
+    BridgeQueue is a queue.Queue subclass intended to 'bridge' a real thread
+    and a coroutine. Where the thread is the producer and the coroutine is
+    the consumer.
+
+    The queue implements the async iterator protocol for the consuming
+    coroutine and exposes the normal queue.Queue for threads.
+
+    Additionally, there is a sentinel value assigned to the queue that can be
+    used to indicate when iteration should cease.
+    """
 
     sentinel = object()
 
@@ -41,25 +53,41 @@ class Chunked(asyncio.Queue):
         return self
 
     async def __anext__(self):
-        item = await self.get()
-        if item is self.sentinel:
-            raise StopAsyncIteration
-        return item
+        while True:
+            try:
+                item = self.get_nowait()
+                if item is self.sentinel:
+                    raise StopAsyncIteration
+                else:
+                    return item
+            except queue.Empty:
+                await asyncio.sleep(0.0)
 
     @classmethod
     def one(cls, item):
+        """
+        Constructs a BridgeQueue with the single provided item followed by
+        the sentinel value.  This function does not block.
+        """
         q = cls()
         q.put_nowait(item)
         q.put_nowait(q.sentinel)
         return q
 
+    def read_from(self, fp, chunk_size=2 ** 12):
+        """
+        Reads from a file-like object in chunk_size blocks and puts the bytes
+        into the queue.
 
-def chunker(fp, q, chunk_size=2 ** 12):
-    chunk = fp.read(chunk_size)
-    while chunk:
-        q.put_nowait(chunk)
+        Once the file has been read completely, the queue's sentinel value is
+        placed into the queue, signaling to the consumer that all data has
+        been read.
+        """
         chunk = fp.read(chunk_size)
-    q.put_nowait(q.sentinel)
+        while chunk:
+            self.put(chunk)
+            chunk = fp.read(chunk_size)
+        self.put(self.sentinel)
 
 
 async def watch_queue(loop, conn, buf):
@@ -81,8 +109,8 @@ async def watch_queue(loop, conn, buf):
                 if conn.closed:
                     logger.debug('Message not sent: connection already closed')
                 else:
-                    q = Chunked()
-                    await asyncio.gather(loop.run_in_executor(None, chunker, fp, q), conn.send(q))
+                    q = BridgeQueue(maxsize=1)
+                    await asyncio.gather(loop.run_in_executor(None, q.read_from, fp), conn.send(q))
             except Exception:
                 logger.exception("watch_queue: error received trying to write")
                 await buf.put_ident(ident)
@@ -142,7 +170,7 @@ class Worker:
 
     async def hello(self):
         msg = self.receptor._say_hi().serialize()
-        await self.conn.send(Chunked.one(msg))
+        await self.conn.send(BridgeQueue.one(msg))
 
     async def start_processing(self):
         await self.receptor.send_route_advertisement()
